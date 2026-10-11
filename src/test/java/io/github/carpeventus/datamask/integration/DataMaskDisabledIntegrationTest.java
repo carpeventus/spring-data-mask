@@ -8,6 +8,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -30,5 +31,15 @@ class DataMaskDisabledIntegrationTest {
                         + "  \"address\": {\"email\": \"dgs@qq.com\", \"city\": \"Hangzhou\"},\n"
                         + "  \"cards\": [{\"cardNo\": \"6222020200112233\", \"bank\": \"ICBC\"}]\n"
                         + "}", true));
+    }
+
+    @Test
+    void leavesCipherFieldsOutWhenDisabled() throws Exception {
+        mockMvc.perform(get("/sensitive/cipher/contact"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.phone").value("13812345678"))
+                .andExpect(jsonPath("$.phoneCipher").doesNotExist())
+                .andExpect(jsonPath("$.email").value("dgs@qq.com"))
+                .andExpect(jsonPath("$.emailCipher").doesNotExist());
     }
 }
