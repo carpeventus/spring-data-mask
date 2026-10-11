@@ -52,8 +52,9 @@ public class DataMaskAutoConfiguration {
 
     @Bean
     public DataMaskCipherService dataMaskCipherService(CipherKeyProvider cipherKeyProvider,
-            CurrentUserProvider currentUserProvider, Clock dataMaskClock) {
-        return new DataMaskCipherService(cipherKeyProvider, currentUserProvider, dataMaskClock);
+            CurrentUserProvider currentUserProvider, Clock dataMaskClock, DataMaskProperties dataMaskProperties) {
+        return new DataMaskCipherService(cipherKeyProvider, currentUserProvider, dataMaskClock,
+                dataMaskProperties.getCipherExpireTime());
     }
 
     private static void requireExtensionPoint(ObjectProvider<?> provider, Class<?> extensionPoint) {

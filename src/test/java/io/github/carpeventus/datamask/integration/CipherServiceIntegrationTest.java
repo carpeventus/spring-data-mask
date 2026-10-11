@@ -16,6 +16,7 @@ import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Base64;
@@ -117,7 +118,7 @@ class CipherServiceIntegrationTest {
     @Test
     void rejectsKeysThatAreNot32BytesAtUseTime() {
         DataMaskCipherService shortKeyService = new DataMaskCipherService(
-                () -> new byte[16], () -> "4554", java.time.Clock.systemUTC());
+                () -> new byte[16], () -> "4554", java.time.Clock.systemUTC(), Duration.ofHours(24));
 
         assertThatThrownBy(() -> shortKeyService.encrypt("13812345678"))
                 .isInstanceOf(IllegalStateException.class)

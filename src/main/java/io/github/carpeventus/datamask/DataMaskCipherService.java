@@ -11,12 +11,14 @@ import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 密文服务 Bean：把明文字段加密为可逆的密文串，并按批解密还原。
@@ -25,9 +27,15 @@ import java.util.Map;
  * 算法 AES-256-GCM，每次加密随机生成 12 字节 IV；明文载荷为 Jackson 序列化的
  * JSON {@code {"p": 原始字段值, "u": 当前用户, "t": epoch 秒}}。
  *
- * <p>SDK 不注册任何 HTTP 接口，解密只通过本 Bean 提供（见 ADR-0003）。
+ * <p>解密按顺序还原为等长明文列表：单批最多 {@value #MAX_CIPHERS_PER_BATCH} 条；校验密文归属的
+ * 当前用户与请求方一致、密文未超过 {@code data-mask.cipher-expire-time} 有效期，任一条失败整批失败，
+ * 错误统一为 {@link DataMaskException}（携带错误码），不做密文与明文的映射。SDK 不注册任何 HTTP 接口
+ * （见 ADR-0003）。
  */
 public class DataMaskCipherService {
+
+    /** 单批最多接受的密文条数。 */
+    public static final int MAX_CIPHERS_PER_BATCH = 50;
 
     /** 随机 IV 长度（字节）。 */
     static final int IV_LENGTH_BYTES = 12;
@@ -45,12 +53,14 @@ public class DataMaskCipherService {
     private final CipherKeyProvider cipherKeyProvider;
     private final CurrentUserProvider currentUserProvider;
     private final Clock clock;
+    private final Duration cipherExpireTime;
 
     public DataMaskCipherService(CipherKeyProvider cipherKeyProvider, CurrentUserProvider currentUserProvider,
-            Clock clock) {
+            Clock clock, Duration cipherExpireTime) {
         this.cipherKeyProvider = cipherKeyProvider;
         this.currentUserProvider = currentUserProvider;
         this.clock = clock;
+        this.cipherExpireTime = cipherExpireTime;
     }
 
     /**
@@ -71,24 +81,50 @@ public class DataMaskCipherService {
     }
 
     /**
-     * 按顺序解密密文列表，返回与输入等长的明文列表；不做密文与明文的映射。
+     * 按顺序解密密文列表，返回与输入等长的明文列表；任一条失败则整批失败，不返回部分结果。
      *
-     * @param ciphertexts 密文串列表
+     * @param ciphertexts 密文串列表，最多 {@value #MAX_CIPHERS_PER_BATCH} 条
      * @return 与输入顺序一致、等长的明文列表
+     * @throws DataMaskException 超出条数上限、用户不一致、密文失效或密文损坏
      */
     public List<String> decrypt(List<String> ciphertexts) {
+        if (ciphertexts.size() > MAX_CIPHERS_PER_BATCH) {
+            throw new DataMaskException(DataMaskException.ErrorCode.TOO_MANY_CIPHERS,
+                    "单次最多解密 " + MAX_CIPHERS_PER_BATCH + " 条密文，实际为 " + ciphertexts.size() + " 条。");
+        }
         byte[] key = requireCipherKey();
+        String currentUser = currentUserProvider.currentUserId();
+        long now = Instant.now(clock).getEpochSecond();
         List<String> plaintexts = new ArrayList<>(ciphertexts.size());
         for (String ciphertext : ciphertexts) {
-            plaintexts.add(decryptOne(key, ciphertext));
+            DecodedCipher decoded = decode(key, ciphertext);
+            if (!Objects.equals(decoded.user, currentUser)) {
+                throw new DataMaskException(DataMaskException.ErrorCode.USER_MISMATCH,
+                        "密文归属的用户与当前用户不一致，密文不能跨用户使用。");
+            }
+            if (now - decoded.epochSeconds > cipherExpireTime.getSeconds()) {
+                throw new DataMaskException(DataMaskException.ErrorCode.CIPHER_EXPIRED,
+                        "密文已超过有效期（" + cipherExpireTime + "）。");
+            }
+            plaintexts.add(decoded.plaintext);
         }
         return plaintexts;
     }
 
-    private String decryptOne(byte[] key, String ciphertext) {
-        byte[] combined = Base64.getUrlDecoder().decode(ciphertext);
+    private DecodedCipher decode(byte[] key, String ciphertext) {
+        if (ciphertext == null) {
+            throw new DataMaskException(DataMaskException.ErrorCode.MALFORMED_CIPHER, "密文为 null。");
+        }
+        byte[] combined;
+        try {
+            combined = Base64.getUrlDecoder().decode(ciphertext);
+        } catch (IllegalArgumentException ex) {
+            throw new DataMaskException(DataMaskException.ErrorCode.MALFORMED_CIPHER,
+                    "密文不是合法的 URL-safe Base64 编码。", ex);
+        }
         if (combined.length < IV_LENGTH_BYTES + TAG_LENGTH_BYTES) {
-            throw new IllegalArgumentException("密文长度不足，无法包含 12 字节 IV 与 16 字节认证标签。");
+            throw new DataMaskException(DataMaskException.ErrorCode.MALFORMED_CIPHER,
+                    "密文长度不足，无法包含 12 字节 IV 与 16 字节认证标签。");
         }
         byte[] iv = new byte[IV_LENGTH_BYTES];
         System.arraycopy(combined, 0, iv, 0, IV_LENGTH_BYTES);
@@ -98,9 +134,29 @@ public class DataMaskCipherService {
         try {
             payload = doFinal(Cipher.DECRYPT_MODE, key, iv, sealed);
         } catch (IllegalStateException ex) {
-            throw new IllegalArgumentException("密文损坏或密钥不匹配。", ex);
+            throw new DataMaskException(DataMaskException.ErrorCode.MALFORMED_CIPHER,
+                    "密文损坏或密钥不匹配。", ex);
         }
-        return payloadPlaintext(payload);
+        return parsePayload(payload);
+    }
+
+    private static DecodedCipher parsePayload(byte[] payload) {
+        JsonNode node;
+        try {
+            node = PAYLOAD_MAPPER.readTree(payload);
+        } catch (IOException ex) {
+            throw new DataMaskException(DataMaskException.ErrorCode.MALFORMED_CIPHER,
+                    "密文载荷解析失败。", ex);
+        }
+        JsonNode plaintext = node == null ? null : node.get("p");
+        JsonNode user = node == null ? null : node.get("u");
+        JsonNode time = node == null ? null : node.get("t");
+        if (plaintext == null || !plaintext.isTextual() || user == null || !user.isTextual() || time == null
+                || !time.canConvertToLong()) {
+            throw new DataMaskException(DataMaskException.ErrorCode.MALFORMED_CIPHER,
+                    "密文载荷缺少 p/u/t 字段。");
+        }
+        return new DecodedCipher(plaintext.asText(), user.asText(), time.asLong());
     }
 
     private byte[] payloadBytes(String plaintext) {
@@ -113,20 +169,6 @@ public class DataMaskCipherService {
         } catch (JsonProcessingException ex) {
             throw new IllegalStateException("data-mask 密文载荷序列化失败。", ex);
         }
-    }
-
-    private static String payloadPlaintext(byte[] payload) {
-        JsonNode node;
-        try {
-            node = PAYLOAD_MAPPER.readTree(payload);
-        } catch (IOException ex) {
-            throw new IllegalArgumentException("密文载荷解析失败。", ex);
-        }
-        JsonNode plaintext = node.get("p");
-        if (plaintext == null || !plaintext.isTextual()) {
-            throw new IllegalArgumentException("密文载荷缺少明文字段 p。");
-        }
-        return plaintext.asText();
     }
 
     private byte[] requireCipherKey() {
@@ -145,6 +187,22 @@ public class DataMaskCipherService {
             return cipher.doFinal(input);
         } catch (GeneralSecurityException ex) {
             throw new IllegalStateException("data-mask 加解密失败。", ex);
+        }
+    }
+
+    /**
+     * 解出的载荷：明文、归属用户与加密时刻（epoch 秒）。
+     */
+    private static final class DecodedCipher {
+
+        private final String plaintext;
+        private final String user;
+        private final long epochSeconds;
+
+        private DecodedCipher(String plaintext, String user, long epochSeconds) {
+            this.plaintext = plaintext;
+            this.user = user;
+            this.epochSeconds = epochSeconds;
         }
     }
 }
