@@ -11,3 +11,7 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 ### Domain docs
 
 Single-context (`GLOSSARY.md` + `docs/adr/` at the repo root). See `docs/agents/domain.md`.
+
+### Working environment
+
+Sandbox, offline-Maven facts and multi-agent worktree rules. See `docs/agents/environment.md`.

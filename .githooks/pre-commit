@@ -1,0 +1,13 @@
+#!/bin/sh
+# 默认分支防护：多代理/实现流程只应在各自的分支（worktree）上提交。
+# 确需在 main 上提交时显式放行：ALLOW_MAIN_COMMIT=1 git commit ...
+
+branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+
+if [ "$branch" = "main" ] && [ "${ALLOW_MAIN_COMMIT:-0}" != "1" ]; then
+  echo "✗ 拒绝向 main 提交：请在分配的分支/worktree 上提交。" >&2
+  echo "  确需在 main 提交时：ALLOW_MAIN_COMMIT=1 git commit ..." >&2
+  exit 1
+fi
+
+exit 0
