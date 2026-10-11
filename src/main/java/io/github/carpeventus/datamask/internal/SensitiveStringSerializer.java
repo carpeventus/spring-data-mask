@@ -16,8 +16,6 @@ public class SensitiveStringSerializer extends StdSerializer<String> {
 
     private static final long serialVersionUID = 1L;
 
-    private static final String FULLY_MASKED = "********";
-
     private final SensitiveDataType type;
 
     public SensitiveStringSerializer(SensitiveDataType type) {
@@ -35,15 +33,6 @@ public class SensitiveStringSerializer extends StdSerializer<String> {
             gen.writeString(value);
             return;
         }
-        gen.writeString(mask(value));
-    }
-
-    private String mask(String value) {
-        switch (type) {
-            case ALL:
-            default:
-                // 其余类型的规则在 ticket 02 补齐；补齐前一律全掩，宁可多掩不泄漏。
-                return FULLY_MASKED;
-        }
+        gen.writeString(MaskingRules.mask(type, value));
     }
 }
