@@ -40,4 +40,15 @@ public class RulesTestController {
     public String plainText() {
         return "dgs@qq.com";
     }
+
+    @SensitiveApi
+    @GetMapping("/sensitive/cipher/contact")
+    public TestFixtures.CipherContactView cipherContact() {
+        return TestFixtures.sampleCipherContact();
+    }
+
+    @GetMapping("/plain/cipher/contact")
+    public TestFixtures.CipherContactView plainCipherContact() {
+        return TestFixtures.sampleCipherContact();
+    }
 }

@@ -370,6 +370,59 @@ public final class TestFixtures {
                         new NestedRuleView("second@qq.com", "010-12345678")));
     }
 
+    /**
+     * 密文字段视图：{@code addCipherField = true} 的字段与仅脱敏字段、null/空值样例。
+     */
+    public static final class CipherContactView {
+
+        @SensitiveData(type = SensitiveDataType.PHONE, addCipherField = true)
+        private final String phone;
+
+        @SensitiveData(type = SensitiveDataType.EMAIL, addCipherField = true)
+        private final String email;
+
+        @SensitiveData(type = SensitiveDataType.ALL)
+        private final String nickname;
+
+        @SensitiveData(type = SensitiveDataType.PHONE, addCipherField = true)
+        private final String nullablePhone;
+
+        @SensitiveData(type = SensitiveDataType.PHONE, addCipherField = true)
+        private final String emptyPhone;
+
+        public CipherContactView(String phone, String email, String nickname, String nullablePhone, String emptyPhone) {
+            this.phone = phone;
+            this.email = email;
+            this.nickname = nickname;
+            this.nullablePhone = nullablePhone;
+            this.emptyPhone = emptyPhone;
+        }
+
+        public String getPhone() {
+            return phone;
+        }
+
+        public String getEmail() {
+            return email;
+        }
+
+        public String getNickname() {
+            return nickname;
+        }
+
+        public String getNullablePhone() {
+            return nullablePhone;
+        }
+
+        public String getEmptyPhone() {
+            return emptyPhone;
+        }
+    }
+
+    public static CipherContactView sampleCipherContact() {
+        return new CipherContactView("13812345678", "dgs@qq.com", "Samantha", null, "");
+    }
+
     public static DocumentView sampleDocuments() {
         return new DocumentView(
                 "6222020200112233",

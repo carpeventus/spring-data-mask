@@ -2,14 +2,18 @@ package io.github.carpeventus.datamask.autoconfigure;
 
 import com.fasterxml.jackson.databind.Module;
 import io.github.carpeventus.datamask.CipherKeyProvider;
+import io.github.carpeventus.datamask.DataMaskCipherService;
 import io.github.carpeventus.datamask.CurrentUserProvider;
 import io.github.carpeventus.datamask.internal.SensitiveApiResponseAdvice;
 import io.github.carpeventus.datamask.internal.SensitiveDataJacksonModule;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
+import java.time.Clock;
 
 /**
  * SDK 自动装配：注册 Jackson 脱敏模块与 {@code @SensitiveApi} 命中检测。
@@ -31,13 +35,25 @@ public class DataMaskAutoConfiguration {
     }
 
     @Bean
-    public Module dataMaskJacksonModule() {
-        return new SensitiveDataJacksonModule();
+    public Module dataMaskJacksonModule(DataMaskCipherService dataMaskCipherService) {
+        return new SensitiveDataJacksonModule(dataMaskCipherService);
     }
 
     @Bean
     public SensitiveApiResponseAdvice sensitiveApiResponseAdvice() {
         return new SensitiveApiResponseAdvice();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public Clock dataMaskClock() {
+        return Clock.systemUTC();
+    }
+
+    @Bean
+    public DataMaskCipherService dataMaskCipherService(CipherKeyProvider cipherKeyProvider,
+            CurrentUserProvider currentUserProvider, Clock dataMaskClock) {
+        return new DataMaskCipherService(cipherKeyProvider, currentUserProvider, dataMaskClock);
     }
 
     private static void requireExtensionPoint(ObjectProvider<?> provider, Class<?> extensionPoint) {
